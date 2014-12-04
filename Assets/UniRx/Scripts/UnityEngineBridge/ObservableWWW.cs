@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace UniRx
 {
-#if !(UNITY_METRO || UNITY_WP8)
+#if !(UNITY_METRO || UNITY_WP8 || UNITY_5_0)
     using Hash = System.Collections.Hashtable;
     using HashEntry = System.Collections.DictionaryEntry;
 #else

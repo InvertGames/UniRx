@@ -1,10 +1,11 @@
-﻿using System;
+﻿// defined from .NET Framework 4.0 and NETFX_CORE
+// Tuple is borrowd from mono/mcs
+
+#if !NETFX_CORE
+
+using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
-// Tuple is borrowd from mono/mcs
 
 namespace UniRx
 {
@@ -988,3 +989,5 @@ namespace UniRx
         }
     }
 }
+
+#endif

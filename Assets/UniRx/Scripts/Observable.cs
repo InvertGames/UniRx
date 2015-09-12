@@ -1,15 +1,11 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
+using System.Threading;
+using UniRx.Operators;
 
 namespace UniRx
 {
-    public interface IObservable<T>
-    {
-        IDisposable Subscribe(IObserver<T> observer);
-    }
-
     // Standard Query Operators
 
     // onNext implementation guide. enclose otherFunc but onNext is not catch.
@@ -22,29 +18,18 @@ namespace UniRx
 
         public static IObservable<TR> Select<T, TR>(this IObservable<T> source, Func<T, TR> selector)
         {
-            return Select(source, (x, i) => selector(x));
+            var select = source as ISelect<T>;
+            if (select != null)
+            {
+                return select.CombineSelector(selector);
+            }
+
+            return new Select<T, TR>(source, selector);
         }
 
         public static IObservable<TR> Select<T, TR>(this IObservable<T> source, Func<T, int, TR> selector)
         {
-            return Observable.Create<TR>(observer =>
-            {
-                var index = 0;
-                return source.Subscribe(Observer.Create<T>(x =>
-                {
-                    var v = default(TR);
-                    try
-                    {
-                        v = selector(x, index++);
-                    }
-                    catch (Exception ex)
-                    {
-                        observer.OnError(ex);
-                        return;
-                    }
-                    observer.OnNext(v);
-                }, observer.OnError, observer.OnCompleted));
-            });
+            return new Select<T, TR>(source, selector);
         }
 
         public static IObservable<T> Where<T>(this IObservable<T> source, Func<T, bool> predicate)
@@ -57,25 +42,25 @@ namespace UniRx
             return Observable.Create<T>(observer =>
             {
                 var index = 0;
-                return source.Subscribe(Observer.Create<T>(x =>
-                {
-                    var isBypass = default(bool);
-                    try
-                    {
-                        isBypass = predicate(x, index++);
-                    }
-                    catch (Exception ex)
-                    {
-                        observer.OnError(ex);
-                        return;
-                    }
+                return source.Subscribe(Observer.Create<T, T>(x =>
+                 {
+                     var isBypass = default(bool);
+                     try
+                     {
+                         isBypass = predicate(x, index++);
+                     }
+                     catch (Exception ex)
+                     {
+                         observer.OnError(ex);
+                         return;
+                     }
 
-                    if (isBypass)
-                    {
-                        observer.OnNext(x);
-                    }
-                }, observer.OnError, observer.OnCompleted));
-            });
+                     if (isBypass)
+                     {
+                         observer.OnNext(x);
+                     }
+                 }, observer));
+            }, isRequiredSubscribeOnCurrentThread: source.IsRequiredSubscribeOnCurrentThread());
         }
         public static IObservable<TR> SelectMany<T, TR>(this IObservable<T> source, IObservable<TR> other)
         {
@@ -104,7 +89,7 @@ namespace UniRx
 
         public static IObservable<TResult> SelectMany<TSource, TResult>(this IObservable<TSource> source, Func<TSource, IEnumerable<TResult>> selector)
         {
-            return new AnonymousObservable<TResult>(observer =>
+            return Observable.Create<TResult>(observer =>
                 source.Subscribe(
                     x =>
                     {
@@ -225,7 +210,7 @@ namespace UniRx
 
         public static IObservable<TResult> SelectMany<TSource, TCollection, TResult>(this IObservable<TSource> source, Func<TSource, IEnumerable<TCollection>> collectionSelector, Func<TSource, TCollection, TResult> resultSelector)
         {
-            return new AnonymousObservable<TResult>(observer =>
+            return Observable.Create<TResult>(observer =>
                 source.Subscribe(
                     x =>
                     {
@@ -603,9 +588,21 @@ namespace UniRx
                     {
                         try
                         {
-                            sameKey = (comparer == null)
-                                ? currentKey.Equals(prevKey)
-                                : comparer.Equals(currentKey, prevKey);
+                            if (comparer == null)
+                            {
+                                if (currentKey == null)
+                                {
+                                    sameKey = (prevKey == null);
+                                }
+                                else
+                                {
+                                    sameKey = currentKey.Equals(prevKey);
+                                }
+                            }
+                            else
+                            {
+                                sameKey = comparer.Equals(currentKey, prevKey);
+                            }
                         }
                         catch (Exception ex)
                         {

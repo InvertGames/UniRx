@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 
 namespace UniRx
@@ -204,7 +203,10 @@ namespace UniRx
                     }
                 }, observer.OnError, () =>
                 {
-                    observer.OnNext(list);
+                    if (list.Count > 0)
+                    {
+                        observer.OnNext(list);
+                    }
                     observer.OnCompleted();
                 });
             });
@@ -278,15 +280,10 @@ namespace UniRx
                     lock (gate)
                     {
                         currentList = list;
-                        if (currentList.Count != 0)
-                        {
-                            list = new List<T>();
-                        }
+                        list = new List<T>();
                     }
-                    if (currentList.Count != 0)
-                    {
-                        observer.OnNext(currentList);
-                    }
+
+                    observer.OnNext(currentList);
                     self(timeSpan);
                 }));
 
@@ -299,6 +296,89 @@ namespace UniRx
                     }
                 }, observer.OnError, () =>
                 {
+                    var currentList = list;
+                    observer.OnNext(currentList);
+                    observer.OnCompleted();
+                }));
+
+                return d;
+            });
+        }
+
+        public static IObservable<IList<T>> Buffer<T>(this IObservable<T> source, TimeSpan timeSpan, int count)
+        {
+            return Buffer(source, timeSpan, count, Scheduler.DefaultSchedulers.TimeBasedOperations);
+        }
+
+        public static IObservable<IList<T>> Buffer<T>(this IObservable<T> source, TimeSpan timeSpan, int count, IScheduler scheduler)
+        {
+            if (source == null) throw new ArgumentNullException("source");
+            if (count <= 0) throw new ArgumentOutOfRangeException("count <= 0");
+
+            return Observable.Create<IList<T>>(observer =>
+            {
+                var list = new List<T>();
+                var gate = new object();
+                var timerId = 0L;
+
+                var d = new CompositeDisposable(2);
+                var timerD = new SerialDisposable();
+
+                // timer
+                d.Add(timerD);
+                Action createTimer = () =>
+                {
+                    var currentTimerId = timerId;
+                    var timerS = new SingleAssignmentDisposable();
+                    timerD.Disposable = timerS; // restart timer(dispose before)
+                    timerS.Disposable = scheduler.Schedule(timeSpan, self =>
+                    {
+                        List<T> currentList;
+                        lock (gate)
+                        {
+                            if (currentTimerId != timerId) return;
+
+                            currentList = list;
+                            if (currentList.Count != 0)
+                            {
+                                list = new List<T>();
+                            }
+                        }
+                        if (currentList.Count != 0)
+                        {
+                            observer.OnNext(currentList);
+                        }
+                        self(timeSpan);
+                    });
+                };
+
+                createTimer();
+
+                // subscription
+                d.Add(source.Subscribe(x =>
+                {
+                    List<T> currentList = null;
+                    lock (gate)
+                    {
+                        list.Add(x);
+                        if (list.Count == count)
+                        {
+                            currentList = list;
+                            list = new List<T>();
+                            timerId++;
+                            createTimer();
+                        }
+                    }
+                    if (currentList != null)
+                    {
+                        observer.OnNext(currentList);
+                    }
+                }, observer.OnError, () =>
+                {
+                    lock (gate)
+                    {
+                        timerId++;
+                    }
                     var currentList = list;
                     observer.OnNext(currentList);
                     observer.OnCompleted();
@@ -480,8 +560,42 @@ namespace UniRx
                 return d;
             });
         }
-        // TimeSpan + count
 
+        /// <summary>Projects old and new element of a sequence into a new form.</summary>
+        public static IObservable<TR> Pairwise<T, TR>(this IObservable<T> source, Func<T, T, TR> selector)
+        {
+            var result = Observable.Create<TR>(observer =>
+            {
+                T prev = default(T);
+                var isFirst = true;
+
+                return source.Subscribe(x =>
+                {
+                    if (isFirst)
+                    {
+                        isFirst = false;
+                        prev = x;
+                        return;
+                    }
+
+                    TR value;
+                    try
+                    {
+                        value = selector(prev, x);
+                        prev = x;
+                    }
+                    catch (Exception ex)
+                    {
+                        observer.OnError(ex);
+                        return;
+                    }
+
+                    observer.OnNext(value);
+                }, observer.OnError, observer.OnCompleted);
+            });
+
+            return result;
+        }
 
         // first, last, single
 
@@ -556,15 +670,21 @@ namespace UniRx
         {
             return Observable.Create<T>(observer =>
             {
+                var isFirst = true;
                 return source.Subscribe(x =>
                 {
-                    observer.OnNext(x);
-                    observer.OnCompleted();
+                    if(isFirst)
+                    {
+                        isFirst = false;
+                        observer.OnNext(x);
+                        observer.OnCompleted();
+                    }
                 }, observer.OnError,
                 () =>
                 {
                     if (useDefault)
                     {
+                        isFirst = false;
                         observer.OnNext(default(T));
                         observer.OnCompleted();
                     }

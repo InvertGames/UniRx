@@ -1,7 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 namespace UniRx
 {
@@ -385,6 +383,63 @@ namespace UniRx
             });
         }
 
+        public static IObservable<TSource> ThrottleFirst<TSource>(this IObservable<TSource> source, TimeSpan dueTime)
+        {
+            return source.ThrottleFirst(dueTime, Scheduler.DefaultSchedulers.TimeBasedOperations);
+        }
+
+        public static IObservable<TSource> ThrottleFirst<TSource>(this IObservable<TSource> source, TimeSpan dueTime, IScheduler scheduler)
+        {
+            return new AnonymousObservable<TSource>(observer =>
+            {
+                var gate = new object();
+                var open = true;
+                var cancelable = new SerialDisposable();
+
+                var subscription = source.Subscribe(x =>
+                {
+                    lock (gate)
+                    {
+                        if (!open) return;
+                        observer.OnNext(x);
+                        open = false;
+                    }
+
+                    var d = new SingleAssignmentDisposable();
+                    cancelable.Disposable = d;
+                    d.Disposable = scheduler.Schedule(dueTime, () =>
+                    {
+                        lock (gate)
+                        {
+                            open = true;
+                        }
+                    });
+
+                },
+                    exception =>
+                    {
+                        cancelable.Dispose();
+
+                        lock (gate)
+                        {
+                            observer.OnError(exception);
+                        }
+                    },
+                    () =>
+                    {
+                        cancelable.Dispose();
+
+                        lock (gate)
+                        {
+                            observer.OnCompleted();
+
+                        }
+                    });
+
+                return new CompositeDisposable(subscription, cancelable);
+            });
+        }
+
         public static IObservable<T> Timeout<T>(this IObservable<T> source, TimeSpan dueTime)
         {
             return source.Timeout(dueTime, Scheduler.DefaultSchedulers.TimeBasedOperations);
@@ -394,27 +449,70 @@ namespace UniRx
         {
             return Observable.Create<T>(observer =>
             {
-                var beforeTime = scheduler.Now;
+                object gate = new object();
+                var objectId = 0ul;
+                var isTimeout = false;
 
-                Func<IDisposable> runTimer = () => scheduler.Schedule(dueTime, () =>
+                Func<ulong, IDisposable> runTimer = (timerId) =>
                 {
-                    if (scheduler.Now - beforeTime >= dueTime)
+                    return scheduler.Schedule(dueTime, () =>
                     {
-                        observer.OnError(new TimeoutException());
-                    }
-                });
+                        lock (gate)
+                        {
+                            if (objectId == timerId)
+                            {
+                                isTimeout = true;
+                            }
+                        }
+                        if (isTimeout)
+                        {
+                            observer.OnError(new TimeoutException());
+                        }
+                    });
+                };
 
                 var timerDisposable = new SerialDisposable();
-                timerDisposable.Disposable = runTimer();
+                timerDisposable.Disposable = runTimer(objectId);
 
                 var sourceSubscription = new SingleAssignmentDisposable();
                 sourceSubscription.Disposable = source.Subscribe(x =>
                 {
-                    timerDisposable.Disposable = Disposable.Empty; // Cancel Old Timer
+                    bool timeout;
+                    lock (gate)
+                    {
+                        timeout = isTimeout;
+                        objectId++;
+                    }
+                    if (timeout) return;
+
+                    timerDisposable.Disposable = Disposable.Empty; // cancel old timer
                     observer.OnNext(x);
-                    beforeTime = scheduler.Now;
-                    timerDisposable.Disposable = runTimer();
-                }, observer.OnError, observer.OnCompleted);
+                    timerDisposable.Disposable = runTimer(objectId);
+                }, ex =>
+                {
+                    bool timeout;
+                    lock (gate)
+                    {
+                        timeout = isTimeout;
+                        objectId++;
+                    }
+                    if (timeout) return;
+
+                    timerDisposable.Dispose();
+                    observer.OnError(ex);
+                }, () =>
+                {
+                    bool timeout;
+                    lock (gate)
+                    {
+                        timeout = isTimeout;
+                        objectId++;
+                    }
+                    if (timeout) return;
+
+                    timerDisposable.Dispose();
+                    observer.OnCompleted();
+                });
 
                 return new CompositeDisposable { timerDisposable, sourceSubscription };
             });
@@ -429,13 +527,47 @@ namespace UniRx
         {
             return Observable.Create<T>(observer =>
             {
+                var gate = new object();
+                var isFinished = false;
+                var sourceSubscription = new SingleAssignmentDisposable();
+
                 var timerD = scheduler.Schedule(dueTime, () =>
                 {
+                    lock (gate)
+                    {
+                        if (isFinished) return;
+                        isFinished = true;
+                    }
+                    sourceSubscription.Dispose();
                     observer.OnError(new TimeoutException());
                 });
 
-                var sourceSubscription = new SingleAssignmentDisposable();
-                sourceSubscription.Disposable = source.Subscribe(observer.OnNext, observer.OnError, observer.OnCompleted);
+                sourceSubscription.Disposable = source.Subscribe(x =>
+                {
+                    lock (gate)
+                    {
+                        if (!isFinished) observer.OnNext(x);
+                    }
+                }, ex =>
+                {
+                    lock (gate)
+                    {
+                        if (isFinished) return;
+                        isFinished = true;
+                    }
+                    observer.OnError(ex);
+                }, () =>
+                 {
+                     lock (gate)
+                     {
+                         if (!isFinished)
+                         {
+                             isFinished = true;
+                             timerD.Dispose();
+                         }
+                         observer.OnCompleted();
+                     }
+                 });
 
                 return new CompositeDisposable { timerD, sourceSubscription };
             });

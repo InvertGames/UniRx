@@ -1,15 +1,27 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using UnityEngine;
 
 namespace UniRx
 {
+#if UniRxLibrary
+    public static partial class SchedulerUnity
+    {
+#else
     public static partial class Scheduler
     {
+        public static void SetDefaultForUnity()
+        {
+            Scheduler.DefaultSchedulers.ConstantTimeOperations = Scheduler.Immediate;
+            Scheduler.DefaultSchedulers.TailRecursion = Scheduler.Immediate;
+            Scheduler.DefaultSchedulers.Iteration = Scheduler.CurrentThread;
+            Scheduler.DefaultSchedulers.TimeBasedOperations = MainThread;
+            Scheduler.DefaultSchedulers.AsyncConversions = Scheduler.ThreadPool;
+        }
+#endif
         static IScheduler mainThread;
 
         /// <summary>
@@ -66,15 +78,19 @@ namespace UniRx
                     yield break;
                 }
 #endif
-
+                
                 if (dueTime == TimeSpan.Zero)
                 {
                     yield return null; // not immediately, run next frame
+                    if (cancellation.IsDisposed) yield break;
+
                     MainThreadDispatcher.UnsafeSend(action);
                 }
                 else if (dueTime.TotalMilliseconds % 1000 == 0)
                 {
                     yield return new WaitForSeconds((float)dueTime.TotalSeconds);
+                    if (cancellation.IsDisposed) yield break;
+
                     MainThreadDispatcher.UnsafeSend(action);
                 }
                 else
@@ -122,7 +138,7 @@ namespace UniRx
             public IDisposable Schedule(TimeSpan dueTime, Action action)
             {
                 var d = new BooleanDisposable();
-                var time = Normalize(dueTime);
+                var time = Scheduler.Normalize(dueTime);
 
                 MainThreadDispatcher.SendStartCoroutine(DelayAction(time, () =>
                 {
@@ -168,6 +184,8 @@ namespace UniRx
                 if (dueTime == TimeSpan.Zero)
                 {
                     yield return null;
+                    if (cancellation.IsDisposed) yield break;
+
                     MainThreadDispatcher.UnsafeSend(action);
                 }
                 else
@@ -215,7 +233,7 @@ namespace UniRx
             public IDisposable Schedule(TimeSpan dueTime, Action action)
             {
                 var d = new BooleanDisposable();
-                var time = Normalize(dueTime);
+                var time = Scheduler.Normalize(dueTime);
 
                 MainThreadDispatcher.SendStartCoroutine(DelayAction(time, () =>
                 {

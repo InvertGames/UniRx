@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Linq; // memo, remove LINQ(for avoid AOT)
 using System.Text;
 
 namespace UniRx
@@ -103,14 +103,45 @@ namespace UniRx
                 }));
             });
         }
+
         public static IObservable<TSource> Merge<TSource>(this IEnumerable<IObservable<TSource>> sources)
         {
-            return Merge(sources.ToObservable(Scheduler.DefaultSchedulers.ConstantTimeOperations));
+            return Merge(sources, Scheduler.DefaultSchedulers.ConstantTimeOperations);
+        }
+
+        public static IObservable<TSource> Merge<TSource>(this IEnumerable<IObservable<TSource>> sources, IScheduler scheduler)
+        {
+            return Merge(sources.ToObservable(scheduler));
+        }
+
+        public static IObservable<TSource> Merge<TSource>(this IEnumerable<IObservable<TSource>> sources, int maxConcurrent)
+        {
+            return Merge(sources, maxConcurrent, Scheduler.DefaultSchedulers.ConstantTimeOperations);
+        }
+
+        public static IObservable<TSource> Merge<TSource>(this IEnumerable<IObservable<TSource>> sources, int maxConcurrent, IScheduler scheduler)
+        {
+            return Merge(sources.ToObservable(scheduler), maxConcurrent);
         }
 
         public static IObservable<TSource> Merge<TSource>(params IObservable<TSource>[] sources)
         {
-            return Merge(sources.ToObservable(Scheduler.DefaultSchedulers.ConstantTimeOperations));
+            return Merge(Scheduler.DefaultSchedulers.ConstantTimeOperations, sources);
+        }
+
+        public static IObservable<TSource> Merge<TSource>(IScheduler scheduler, params IObservable<TSource>[] sources)
+        {
+            return Merge(sources.ToObservable(scheduler));
+        }
+
+        public static IObservable<T> Merge<T>(this IObservable<T> first, IObservable<T> second)
+        {
+            return Merge(new[] { first, second });
+        }
+
+        public static IObservable<T> Merge<T>(this IObservable<T> first, IObservable<T> second, IScheduler scheduler)
+        {
+            return Merge(scheduler, new[] { first, second });
         }
 
         public static IObservable<T> Merge<T>(this IObservable<IObservable<T>> sources)
@@ -328,7 +359,11 @@ namespace UniRx
             {
                 var gate = new object();
                 var length = sources.Length;
-                var queues = Enumerable.Range(0, length).Select(_ => new Queue<T>()).ToArray();
+                var queues = new Queue<T>[length];
+                for (int i = 0; i < length; i++)
+                {
+                    queues[i] = new Queue<T>();
+                }
                 var isDone = new bool[length];
 
                 Action<int> dequeue = index =>
@@ -463,7 +498,7 @@ namespace UniRx
                 });
 
                 return new CompositeDisposable { lsubscription, rsubscription };
-            });
+            }, isRequiredSubscribeOnCurrentThread: left.IsRequiredSubscribeOnCurrentThread() && right.IsRequiredSubscribeOnCurrentThread());
         }
 
         public static IObservable<IList<T>> CombineLatest<T>(this IEnumerable<IObservable<T>> sources)
@@ -617,11 +652,12 @@ namespace UniRx
         }
 
         /// <summary>
-        /// Specialized for single async operations like Task.WhenAll, Zip.Take(1)
+        /// <para>Specialized for single async operations like Task.WhenAll, Zip.Take(1).</para>
+        /// <para>If sequence is empty, return T[0] array.</para>
         /// </summary>
         public static IObservable<T[]> WhenAll<T>(params IObservable<T>[] sources)
         {
-            if (sources.Length == 0) return Observable.Empty<T[]>();
+            if (sources.Length == 0) return Observable.Return(new T[0]);
 
             return Observable.Create<T[]>(observer =>
             {
@@ -630,47 +666,141 @@ namespace UniRx
                 var completedCount = 0;
                 var values = new T[length];
 
-                var subscriptions = sources
-                    .Select((source, index) =>
+                var subscriptions = new IDisposable[length];
+                for (int index = 0; index < length; index++)
+                {
+                    var source = sources[index];
+                    var capturedIndex = index;
+                    var d = new SingleAssignmentDisposable();
+                    d.Disposable = source.Subscribe(x =>
                     {
-                        var d = new SingleAssignmentDisposable();
-
-                        d.Disposable = source.Subscribe(x =>
+                        lock (gate)
                         {
-                            lock (gate)
-                            {
-                                values[index] = x;
-                            }
-                        }, ex =>
+                            values[capturedIndex] = x;
+                        }
+                    }, ex =>
+                    {
+                        lock (gate)
                         {
-                            lock (gate)
-                            {
-                                observer.OnError(ex);
-                            }
-                        }, () =>
+                            observer.OnError(ex);
+                        }
+                    }, () =>
+                    {
+                        lock (gate)
                         {
-                            lock (gate)
+                            completedCount++;
+                            if (completedCount == length)
                             {
-                                completedCount++;
-                                if (completedCount == length)
-                                {
-                                    observer.OnNext(values);
-                                    observer.OnCompleted();
-                                }
+                                observer.OnNext(values);
+                                observer.OnCompleted();
                             }
-                        });
-
-                        return d;
-                    })
-                    .ToArray();
+                        }
+                    });
+                    subscriptions[index] = d;
+                }
 
                 return new CompositeDisposable(subscriptions);
             });
         }
 
+        /// <summary>
+        /// <para>Specialized for single async operations like Task.WhenAll, Zip.Take(1).</para>
+        /// <para>If sequence is empty, return T[0] array.</para>
+        /// </summary>
+        public static IObservable<T[]> WhenAll<T>(this IEnumerable<IObservable<T>> sources)
+        {
+            var array = sources as IObservable<T>[];
+            if (array != null) return WhenAll(array);
+
+            return Observable.Create<T[]>(observer =>
+            {
+                var _sources = sources as IList<IObservable<T>>;
+                if (_sources == null)
+                {
+                    _sources = new List<IObservable<T>>();
+                    foreach (var item in sources)
+                    {
+                        _sources.Add(item);
+                    }
+                }
+
+                var gate = new object();
+                var length = _sources.Count;
+                var completedCount = 0;
+                var values = new T[length];
+
+                if (length == 0)
+                {
+                    observer.OnNext(values);
+                    observer.OnCompleted();
+                    return Disposable.Empty;
+                }
+
+                var subscriptions = new IDisposable[length];
+                for (int index = 0; index < length; index++)
+                {
+                    var source = _sources[index];
+                    var capturedIndex = index;
+                    var d = new SingleAssignmentDisposable();
+                    d.Disposable = source.Subscribe(x =>
+                    {
+                        lock (gate)
+                        {
+                            values[capturedIndex] = x;
+                        }
+                    }, ex =>
+                    {
+                        lock (gate)
+                        {
+                            observer.OnError(ex);
+                        }
+                    }, () =>
+                    {
+                        lock (gate)
+                        {
+                            completedCount++;
+                            if (completedCount == length)
+                            {
+                                observer.OnNext(values);
+                                observer.OnCompleted();
+                            }
+                        }
+                    });
+                    subscriptions[index] = d;
+                }
+
+                return new CompositeDisposable(subscriptions);
+            });
+
+        }
+
         public static IObservable<T> StartWith<T>(this IObservable<T> source, T value)
         {
-            return StartWith(source, Scheduler.DefaultSchedulers.ConstantTimeOperations, value);
+            // optimized path
+            return Observable.Create<T>(observer =>
+            {
+                observer.OnNext(value);
+                return source.Subscribe(observer);
+            });
+        }
+
+        public static IObservable<T> StartWith<T>(this IObservable<T> source, Func<T> valueFactory)
+        {
+            return Observable.Create<T>(observer =>
+            {
+                T value;
+                try
+                {
+                    value = valueFactory();
+                }
+                catch (Exception ex)
+                {
+                    observer.OnError(ex);
+                    return Disposable.Empty;
+                }
+                observer.OnNext(value);
+                return source.Subscribe(observer);
+            });
         }
 
         public static IObservable<T> StartWith<T>(this IObservable<T> source, params T[] values)
@@ -688,19 +818,19 @@ namespace UniRx
             return Observable.Return(value, scheduler).Concat(source);
         }
 
-        public static IObservable<T> StartWith<T>(this IObservable<T> source, IScheduler scheduler, params T[] values)
-        {
-            return values.ToObservable(scheduler).Concat(source);
-        }
-
         public static IObservable<T> StartWith<T>(this IObservable<T> source, IScheduler scheduler, IEnumerable<T> values)
         {
             var array = values as T[];
-            if (array != null)
+            if (array == null)
             {
                 array = values.ToArray();
             }
 
+            return StartWith(source, scheduler, array);
+        }
+
+        public static IObservable<T> StartWith<T>(this IObservable<T> source, IScheduler scheduler, params T[] values)
+        {
             return values.ToObservable(scheduler).Concat(source);
         }
     }

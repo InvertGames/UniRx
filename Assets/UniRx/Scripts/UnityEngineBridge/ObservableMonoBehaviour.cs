@@ -1,20 +1,33 @@
-﻿using UnityEngine;
+﻿using System;
+using UnityEngine;
 
 namespace UniRx
 {
+    // not yet obsolete
+    // [Obsolete("ObservableMonoBehaviour is legacy component. use triggres instead")]
+
+    /// <summary>
+    /// <para>Note: TypedMonoBehaviour and ObservableMonoBehaviour cause some performance issues.</para>
+    /// <para>This is legacy interface.</para>
+    /// <para>I recommend use ObservableTriggers(UniRx.Triggers) instead.</para>
+    /// <para>More information, see github page.</para>
+    /// </summary>
     public class ObservableMonoBehaviour : TypedMonoBehaviour
     {
+        bool calledAwake = false;
         Subject<Unit> awake;
 
         /// <summary>Awake is called when the script instance is being loaded.</summary>
         public override void Awake()
         {
-            if (awake != null) awake.OnNext(Unit.Default);
+            calledAwake = true;
+            if (awake != null) { awake.OnNext(Unit.Default); awake.OnCompleted(); }
         }
 
         /// <summary>Awake is called when the script instance is being loaded.</summary>
         public IObservable<Unit> AwakeAsObservable()
         {
+            if (calledAwake) return Observable.Return(Unit.Default);
             return awake ?? (awake = new Subject<Unit>());
         }
 
@@ -270,17 +283,21 @@ namespace UniRx
             return onControllerColliderHit ?? (onControllerColliderHit = new Subject<ControllerColliderHit>());
         }
 
+        bool calledDestroy = false;
         Subject<Unit> onDestroy;
 
         /// <summary>This function is called when the MonoBehaviour will be destroyed.</summary>
         public override void OnDestroy()
         {
-            if (onDestroy != null) onDestroy.OnNext(Unit.Default);
+            calledDestroy = true;
+            if (onDestroy != null) { onDestroy.OnNext(Unit.Default); onDestroy.OnCompleted(); }
         }
 
         /// <summary>This function is called when the MonoBehaviour will be destroyed.</summary>
         public IObservable<Unit> OnDestroyAsObservable()
         {
+            if (this == null) return Observable.Return(Unit.Default);
+            if (calledDestroy) return Observable.Return(Unit.Default);
             return onDestroy ?? (onDestroy = new Subject<Unit>());
         }
 
@@ -386,7 +403,7 @@ namespace UniRx
             return onLevelWasLoaded ?? (onLevelWasLoaded = new Subject<int>());
         }
 
-#if !UNITY_IPHONE
+#if !(UNITY_IPHONE || UNITY_ANDROID || UNITY_METRO)
 
         Subject<Unit> onMouseDown;
 
@@ -712,17 +729,20 @@ namespace UniRx
             return reset ?? (reset = new Subject<Unit>());
         }
 
+        bool calledStart = false;
         Subject<Unit> start;
 
         /// <summary>Start is called on the frame when a script is enabled just before any of the Update methods is called the first time.</summary>
         public override void Start()
         {
-            if (start != null) start.OnNext(Unit.Default);
+            calledStart = true;
+            if (start != null) { start.OnNext(Unit.Default); start.OnCompleted(); }
         }
 
         /// <summary>Start is called on the frame when a script is enabled just before any of the Update methods is called the first time.</summary>
         public IObservable<Unit> StartAsObservable()
         {
+            if (calledStart) return Observable.Return(Unit.Default);
             return start ?? (start = new Subject<Unit>());
         }
 
@@ -740,7 +760,7 @@ namespace UniRx
             return update ?? (update = new Subject<Unit>());
         }
 
-#if !(UNITY_METRO || UNITY_WP8 || UNITY_NACL_CHROME)
+#if !(UNITY_METRO || UNITY_WP8 || UNITY_NACL_CHROME || UNITY_WEBGL)
 
         Subject<NetworkDisconnection> onDisconnectedFromServer;
 

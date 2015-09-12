@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace UniRx
 {
@@ -17,22 +15,44 @@ namespace UniRx
             return new AnonymousObservable<T>(subscribe);
         }
 
-        class AnonymousObservable<T> : IObservable<T>
+        /// <summary>
+        /// Create anonymous observable. Observer is auto detach when error, completed.
+        /// </summary>
+        public static IObservable<T> Create<T>(Func<IObserver<T>, IDisposable> subscribe, bool isRequiredSubscribeOnCurrentThread)
         {
+            if (subscribe == null) throw new ArgumentNullException("subscribe");
+
+            return new AnonymousObservable<T>(subscribe, isRequiredSubscribeOnCurrentThread);
+        }
+
+        class AnonymousObservable<T> : IObservable<T>, IOptimizedObservable<T>
+        {
+            readonly bool isRequiredSubscribeOnCurrentThread;
             readonly Func<IObserver<T>, IDisposable> subscribe;
 
             public AnonymousObservable(Func<IObserver<T>, IDisposable> subscribe)
+                : this(subscribe, false)
+            {
+
+            }
+
+            public AnonymousObservable(Func<IObserver<T>, IDisposable> subscribe, bool isSchedulerlessObservable)
             {
                 this.subscribe = subscribe;
+                this.isRequiredSubscribeOnCurrentThread = isSchedulerlessObservable;
+            }
+
+            public bool IsRequiredSubscribeOnCurrentThread()
+            {
+                return isRequiredSubscribeOnCurrentThread;
             }
 
             public IDisposable Subscribe(IObserver<T> observer)
             {
                 var subscription = new SingleAssignmentDisposable();
+                var safeObserver = Observer.CreateAutoDetachObserver<T>(observer, subscription);
 
-                var safeObserver = Observer.Create<T>(observer.OnNext, observer.OnError, observer.OnCompleted, subscription);
-
-                if (Scheduler.IsCurrentThreadSchedulerScheduleRequired)
+                if (isRequiredSubscribeOnCurrentThread && Scheduler.IsCurrentThreadSchedulerScheduleRequired)
                 {
                     Scheduler.CurrentThread.Schedule(() => subscription.Disposable = subscribe(safeObserver));
                 }
@@ -243,6 +263,102 @@ namespace UniRx
             {
                 yield return source;
             }
+        }
+
+        /// <summary>
+        /// Same as Repeat() but if arriving contiguous "OnComplete" Repeat stops.
+        /// </summary>
+        public static IObservable<T> RepeatSafe<T>(this IObservable<T> source)
+        {
+            return RepeatSafeCore(RepeatInfinite(source));
+        }
+
+        static IObservable<T> RepeatSafeCore<T>(IEnumerable<IObservable<T>> sources)
+        {
+            return Observable.Create<T>(observer =>
+            {
+                var isDisposed = false;
+                var isRunNext = false;
+                var e = sources.AsSafeEnumerable().GetEnumerator();
+                var subscription = new SerialDisposable();
+                var gate = new object();
+
+                var schedule = Scheduler.DefaultSchedulers.TailRecursion.Schedule(self =>
+                {
+                    lock (gate)
+                    {
+                        if (isDisposed) return;
+
+                        var current = default(IObservable<T>);
+                        var hasNext = false;
+                        var ex = default(Exception);
+
+                        try
+                        {
+                            hasNext = e.MoveNext();
+                            if (hasNext)
+                            {
+                                current = e.Current;
+                                if (current == null) throw new InvalidOperationException("sequence is null.");
+                            }
+                            else
+                            {
+                                e.Dispose();
+                            }
+                        }
+                        catch (Exception exception)
+                        {
+                            ex = exception;
+                            e.Dispose();
+                        }
+
+                        if (ex != null)
+                        {
+                            observer.OnError(ex);
+                            return;
+                        }
+
+                        if (!hasNext)
+                        {
+                            observer.OnCompleted();
+                            return;
+                        }
+
+                        var source = e.Current;
+                        var d = new SingleAssignmentDisposable();
+                        subscription.Disposable = d;
+                        d.Disposable = source.Subscribe(x =>
+                        {
+                            isRunNext = true;
+                            observer.OnNext(x);
+                        }, observer.OnError, () =>
+                        {
+                            if (isRunNext && !isDisposed)
+                            {
+                                isRunNext = false;
+                                self();
+                            }
+                            else
+                            {
+                                e.Dispose();
+                                if (!isDisposed)
+                                {
+                                    observer.OnCompleted();
+                                }
+                            }
+                        });
+                    }
+                });
+
+                return new CompositeDisposable(schedule, subscription, Disposable.Create(() =>
+                {
+                    lock (gate)
+                    {
+                        isDisposed = true;
+                        e.Dispose();
+                    }
+                }));
+            });
         }
 
         public static IObservable<T> Defer<T>(Func<IObservable<T>> observableFactory)

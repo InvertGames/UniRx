@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
+using System.Linq; // in future, should remove LINQ(for avoid AOT)
 
 namespace UniRx
 {
@@ -98,6 +98,21 @@ namespace UniRx
         public static IObservable<TResult> OfType<TSource, TResult>(this IObservable<TSource> source, TResult witness)
         {
             return source.Where(x => x is TResult).Select(x => (TResult)(object)x);
+        }
+
+        /// <summary>
+        /// Converting .Select(_ => Unit.Default) sequence.
+        /// </summary>
+        public static IObservable<Unit> AsUnitObservable<T>(this IObservable<T> source)
+        {
+            // .Select(_ => Unit.Default), avoid AOT.
+            return Observable.Create<Unit>(observer =>
+            {
+                return source.Subscribe(Observer.Create<T>(_ =>
+                {
+                    observer.OnNext(Unit.Default);
+                }, observer.OnError, observer.OnCompleted));
+            });
         }
     }
 }

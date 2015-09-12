@@ -1,39 +1,34 @@
 ﻿using System;
-using System.Collections;
 using System.Threading;
 
 namespace UniRx
 {
-    public interface IObserver<T>
-    {
-        void OnCompleted();
-        void OnError(Exception error);
-        void OnNext(T value);
-    }
-
     public static class Observer
     {
         public static IObserver<T> Create<T>(Action<T> onNext, Action<Exception> onError, Action onCompleted)
         {
-            return Create<T>(onNext, onError, onCompleted, Disposable.Empty);
-        }
-
-        public static IObserver<T> Create<T>(Action<T> onNext, Action<Exception> onError, Action onCompleted, IDisposable disposable)
-        {
-            if (onNext == null) throw new ArgumentNullException("onNext");
-            if (onError == null) throw new ArgumentNullException("onError");
-            if (onCompleted == null) throw new ArgumentNullException("onCompleted");
-            if (disposable == null) throw new ArgumentNullException("disposable");
-
             // need compare for avoid iOS AOT
             if (onNext == Stubs.Ignore<T>)
             {
-                return new EmptyOnNextAnonymousObserver<T>(onError, onCompleted, disposable);
+                return new EmptyOnNextAnonymousObserver<T>(onError, onCompleted);
             }
             else
             {
-                return new AnonymousObserver<T>(onNext, onError, onCompleted, disposable);
+                return new AnonymousObserver<T>(onNext, onError, onCompleted);
             }
+        }
+
+        /// <summary>
+        /// Create new onNext + rootObserver.OnError, rootObserver.OnCompleted observer.
+        /// </summary>
+        public static IObserver<T> Create<T, TRoot>(Action<T> onNext, IObserver<TRoot> rootObserver)
+        {
+            return new DelegatedOnNextObserver<T, TRoot>(onNext, rootObserver, Disposable.Empty);
+        }
+
+        public static IObserver<T> CreateAutoDetachObserver<T>(IObserver<T> observer, IDisposable disposable)
+        {
+            return new AutoDetachObserver<T>(observer, disposable);
         }
 
         class AnonymousObserver<T> : IObserver<T>
@@ -41,15 +36,89 @@ namespace UniRx
             readonly Action<T> onNext;
             readonly Action<Exception> onError;
             readonly Action onCompleted;
-            readonly IDisposable disposable;
 
             int isStopped = 0;
 
-            public AnonymousObserver(Action<T> onNext, Action<Exception> onError, Action onCompleted, IDisposable disposable)
+            public AnonymousObserver(Action<T> onNext, Action<Exception> onError, Action onCompleted)
             {
                 this.onNext = onNext;
                 this.onError = onError;
                 this.onCompleted = onCompleted;
+            }
+
+            public void OnNext(T value)
+            {
+                if (isStopped == 0)
+                {
+                    onNext(value);
+                }
+            }
+
+            public void OnError(Exception error)
+            {
+                if (Interlocked.Increment(ref isStopped) == 1)
+                {
+                    onError(error);
+                }
+            }
+
+
+            public void OnCompleted()
+            {
+                if (Interlocked.Increment(ref isStopped) == 1)
+                {
+                    onCompleted();
+                }
+            }
+        }
+
+        class EmptyOnNextAnonymousObserver<T> : IObserver<T>
+        {
+            readonly Action<Exception> onError;
+            readonly Action onCompleted;
+
+            int isStopped = 0;
+
+            public EmptyOnNextAnonymousObserver(Action<Exception> onError, Action onCompleted)
+            {
+                this.onError = onError;
+                this.onCompleted = onCompleted;
+            }
+
+            public void OnNext(T value)
+            {
+            }
+
+            public void OnError(Exception error)
+            {
+                if (Interlocked.Increment(ref isStopped) == 1)
+                {
+                    onError(error);
+                }
+            }
+
+
+            public void OnCompleted()
+            {
+                if (Interlocked.Increment(ref isStopped) == 1)
+                {
+                    onCompleted();
+                }
+            }
+        }
+
+        class DelegatedOnNextObserver<T, TRoot> : IObserver<T>
+        {
+            readonly Action<T> onNext;
+            readonly IObserver<TRoot> observer;
+            readonly IDisposable disposable;
+
+            int isStopped = 0;
+
+            public DelegatedOnNextObserver(Action<T> onNext, IObserver<TRoot> observer, IDisposable disposable)
+            {
+                this.onNext = onNext;
+                this.observer = observer;
                 this.disposable = disposable;
             }
 
@@ -75,7 +144,7 @@ namespace UniRx
                 {
                     try
                     {
-                        onError(error);
+                        observer.OnError(error);
                     }
                     finally
                     {
@@ -91,7 +160,7 @@ namespace UniRx
                 {
                     try
                     {
-                        onCompleted();
+                        observer.OnCompleted();
                     }
                     finally
                     {
@@ -101,23 +170,33 @@ namespace UniRx
             }
         }
 
-        class EmptyOnNextAnonymousObserver<T> : IObserver<T>
+        class AutoDetachObserver<T> : IObserver<T>
         {
-            readonly Action<Exception> onError;
-            readonly Action onCompleted;
+            readonly IObserver<T> observer;
             readonly IDisposable disposable;
 
             int isStopped = 0;
 
-            public EmptyOnNextAnonymousObserver(Action<Exception> onError, Action onCompleted, IDisposable disposable)
+            public AutoDetachObserver(IObserver<T> observer, IDisposable disposable)
             {
-                this.onError = onError;
-                this.onCompleted = onCompleted;
+                this.observer = observer;
                 this.disposable = disposable;
             }
 
             public void OnNext(T value)
             {
+                if (isStopped == 0)
+                {
+                    try
+                    {
+                        this.observer.OnNext(value);
+                    }
+                    catch
+                    {
+                        disposable.Dispose();
+                        throw;
+                    }
+                }
             }
 
             public void OnError(Exception error)
@@ -126,7 +205,7 @@ namespace UniRx
                 {
                     try
                     {
-                        onError(error);
+                        this.observer.OnError(error);
                     }
                     finally
                     {
@@ -142,7 +221,7 @@ namespace UniRx
                 {
                     try
                     {
-                        onCompleted();
+                        this.observer.OnCompleted();
                     }
                     finally
                     {

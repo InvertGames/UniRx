@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 
 namespace UniRx
@@ -105,6 +104,120 @@ namespace UniRx
 
                 return d;
             });
+        }
+
+        public static IObservable<T> Amb<T>(params IObservable<T>[] sources)
+        {
+            return Amb((IEnumerable<IObservable<T>>)sources);
+        }
+
+        public static IObservable<T> Amb<T>(IEnumerable<IObservable<T>> sources)
+        {
+            var result = Observable.Never<T>();
+            foreach (var item in sources)
+            {
+                var second = item;
+                result = result.Amb(second);
+            }
+            return result;
+        }
+
+        public static IObservable<T> Amb<T>(this IObservable<T> source, IObservable<T> second)
+        {
+            return Observable.Create<T>(observer =>
+            {
+                var choice = AmbState.Neither;
+                var gate = new Object();
+
+                var leftSubscription = new SingleAssignmentDisposable();
+                var rightSubscription = new SingleAssignmentDisposable();
+
+                leftSubscription.Disposable = source.Subscribe(x =>
+                {
+                    lock (gate)
+                    {
+                        if (choice == AmbState.Neither)
+                        {
+                            choice = AmbState.Left;
+                            rightSubscription.Dispose();
+                            // We can avoid lock every call but I'm not confident in AOT Safety.
+                            // I'll try, check...
+                            // left.Observer = observer;
+                        }
+                    }
+
+                    if (choice == AmbState.Left) observer.OnNext(x);
+                }, ex =>
+                {
+                    lock (gate)
+                    {
+                        if (choice == AmbState.Neither)
+                        {
+                            choice = AmbState.Left;
+                            rightSubscription.Dispose();
+                        }
+                    }
+
+                    if (choice == AmbState.Left) observer.OnError(ex);
+                }, () =>
+                {
+                    lock (gate)
+                    {
+                        if (choice == AmbState.Neither)
+                        {
+                            choice = AmbState.Left;
+                            rightSubscription.Dispose();
+                        }
+                    }
+
+                    if (choice == AmbState.Left) observer.OnCompleted();
+                });
+
+                rightSubscription.Disposable = second.Subscribe(x =>
+                {
+                    lock (gate)
+                    {
+                        if (choice == AmbState.Neither)
+                        {
+                            choice = AmbState.Right;
+                            leftSubscription.Dispose();
+                        }
+                    }
+
+                    if (choice == AmbState.Right) observer.OnNext(x);
+                }, ex =>
+                {
+                    lock (gate)
+                    {
+                        if (choice == AmbState.Neither)
+                        {
+                            choice = AmbState.Right;
+                            leftSubscription.Dispose();
+                        }
+                    }
+
+                    if (choice == AmbState.Right) observer.OnError(ex);
+                }, () =>
+                {
+                    lock (gate)
+                    {
+                        if (choice == AmbState.Neither)
+                        {
+                            choice = AmbState.Right;
+                            leftSubscription.Dispose();
+                        }
+                    }
+
+                    if (choice == AmbState.Right) observer.OnCompleted();
+                });
+
+                return new CompositeDisposable { leftSubscription, rightSubscription };
+            });
+        }
+
+        enum AmbState
+        {
+            Left, Right, Neither
         }
     }
 }

@@ -4,7 +4,7 @@ using UniRx.InternalUtil;
 
 namespace UniRx
 {
-    public sealed class AsyncSubject<T> : ISubject<T>
+    public sealed class AsyncSubject<T> : ISubject<T>, IOptimizedObservable<T>
     {
         object observerLock = new object();
 
@@ -14,6 +14,17 @@ namespace UniRx
         bool isDisposed;
         Exception lastError;
         IObserver<T> outObserver = new EmptyObserver<T>();
+
+        public T Value
+        {
+            get
+            {
+                ThrowIfDisposed();
+                if (!isStopped) throw new InvalidOperationException("AsyncSubject is not completed yet");
+                if (lastError != null) throw lastError;
+                return lastValue;
+            }
+        }
 
         public bool HasObservers
         {
@@ -51,8 +62,6 @@ namespace UniRx
             {
                 old.OnCompleted();
             }
-
-            old.OnCompleted();
         }
 
         public void OnError(Exception error)
@@ -148,12 +157,19 @@ namespace UniRx
             {
                 isDisposed = true;
                 outObserver = new DisposedObserver<T>();
+                lastError = null;
+                lastValue = default(T);
             }
         }
 
         void ThrowIfDisposed()
         {
             if (isDisposed) throw new ObjectDisposedException("");
+        }
+
+        public bool IsRequiredSubscribeOnCurrentThread()
+        {
+            return false;
         }
 
         class Subscription : IDisposable

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace UniRx
 {
@@ -184,7 +183,7 @@ namespace UniRx
 
         public static IObservable<TSource> Retry<TSource>(this IObservable<TSource> source, int retryCount)
         {
-            return Enumerable.Repeat(source, retryCount).Catch();
+            return System.Linq.Enumerable.Repeat(source, retryCount).Catch();
         }
 
         /// <summary>
@@ -248,7 +247,6 @@ namespace UniRx
             var result = Observable.Defer(() =>
             {
                 var dueTime = (delay.Ticks < 0) ? TimeSpan.Zero : delay;
-                var empty = Observable.Empty<TSource>();
                 var count = 0;
 
                 IObservable<TSource> self = null;
@@ -259,7 +257,7 @@ namespace UniRx
                     return (++count < retryCount)
                         ? (dueTime == TimeSpan.Zero)
                             ? self.SubscribeOn(Scheduler.CurrentThread)
-                            : empty.Delay(dueTime, delayScheduler).Concat(self).SubscribeOn(Scheduler.CurrentThread)
+                            : self.DelaySubscription(dueTime, delayScheduler).SubscribeOn(Scheduler.CurrentThread)
                         : Observable.Throw<TSource>(ex);
                 });
                 return self;

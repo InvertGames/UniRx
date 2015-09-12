@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using UnityEngine;
 
@@ -20,6 +19,7 @@ namespace UniRx.Diagnostics
             this.logPublisher = ObservableLogger.RegisterLogger(this);
         }
 
+        /// <summary>Output LogType.Log but only enables isDebugBuild</summary>
         public virtual void Debug(object message, UnityEngine.Object context = null)
         {
             if (!isInitialized)
@@ -31,7 +31,7 @@ namespace UniRx.Diagnostics
             if (isDebugBuild)
             {
                 logPublisher(new LogEntry(
-                    message: message.ToString(),
+                    message: (message != null) ? message.ToString() : "",
                     logType: LogType.Log,
                     timestamp: DateTime.Now,
                     loggerName: Name,
@@ -39,45 +39,104 @@ namespace UniRx.Diagnostics
             }
         }
 
+        /// <summary>Output LogType.Log but only enables isDebugBuild</summary>
+        public virtual void DebugFormat(string format, params object[] args)
+        {
+            if (!isInitialized)
+            {
+                isInitialized = true;
+                isDebugBuild = UnityEngine.Debug.isDebugBuild;
+            }
+
+            if (isDebugBuild)
+            {
+                logPublisher(new LogEntry(
+                    message: (format != null) ? string.Format(format, args) : "",
+                    logType: LogType.Log,
+                    timestamp: DateTime.Now,
+                    loggerName: Name,
+                    context: null));
+            }
+        }
+
         public virtual void Log(object message, UnityEngine.Object context = null)
         {
             logPublisher(new LogEntry(
-                message: message.ToString(),
+                message: (message != null) ? message.ToString() : "",
                 logType: LogType.Log,
                 timestamp: DateTime.Now,
                 loggerName: Name,
                 context: context));
         }
 
+        public virtual void LogFormat(string format, params object[] args)
+        {
+            logPublisher(new LogEntry(
+                message: (format != null) ? string.Format(format, args) : "",
+                logType: LogType.Log,
+                timestamp: DateTime.Now,
+                loggerName: Name,
+                context: null));
+        }
+
         public virtual void Warning(object message, UnityEngine.Object context = null)
         {
             logPublisher(new LogEntry(
-                message: message.ToString(),
+                message: (message != null) ? message.ToString() : "",
                 logType: LogType.Warning,
                 timestamp: DateTime.Now,
                 loggerName: Name,
                 context: context));
         }
 
+        public virtual void WarningFormat(string format, params object[] args)
+        {
+            logPublisher(new LogEntry(
+                message: (format != null) ? string.Format(format, args) : "",
+                logType: LogType.Warning,
+                timestamp: DateTime.Now,
+                loggerName: Name,
+                context: null));
+        }
+
         public virtual void Error(object message, UnityEngine.Object context = null)
         {
             logPublisher(new LogEntry(
-                message: message.ToString(),
+                message: (message != null) ? message.ToString() : "",
                 logType: LogType.Error,
                 timestamp: DateTime.Now,
                 loggerName: Name,
                 context: context));
         }
 
+        public virtual void ErrorFormat(string format, params object[] args)
+        {
+            logPublisher(new LogEntry(
+                message: (format != null) ? string.Format(format, args) : "",
+                logType: LogType.Error,
+                timestamp: DateTime.Now,
+                loggerName: Name,
+                context: null));
+        }
+
         public virtual void Exception(Exception exception, UnityEngine.Object context = null)
         {
             logPublisher(new LogEntry(
-                message: exception.ToString(),
+                message: (exception != null) ? exception.ToString() : "",
                 exception: exception,
                 logType: LogType.Exception,
                 timestamp: DateTime.Now,
                 loggerName: Name,
                 context: context));
+        }
+
+        /// <summary>Publish raw LogEntry.</summary>
+        public virtual void Raw(LogEntry logEntry)
+        {
+            if (logEntry != null)
+            {
+                logPublisher(logEntry);
+            }
         }
     }
 }

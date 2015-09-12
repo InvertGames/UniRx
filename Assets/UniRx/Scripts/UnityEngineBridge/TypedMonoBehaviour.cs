@@ -3,7 +3,10 @@
 namespace UniRx
 {
     /// <summary>
-    /// If you want to use coroutine, implements like "new public IEnumerator OnMouseDown() { }".
+    /// <para>Note: TypedMonoBehaviour and ObservableMonoBehaviour cause some performance issues.</para>
+    /// <para>This is legacy interface.</para>
+    /// <para>I recommend use ObservableTriggers(UniRx.Triggers) instead.</para>
+    /// <para>More information, see github page.</para>
     /// </summary>
     public class TypedMonoBehaviour : MonoBehaviour
     {
@@ -92,7 +95,7 @@ namespace UniRx
         /// <summary>This function is called after a new level was loaded.</summary>
         public virtual void OnLevelWasLoaded(int level) { }
 
-#if !UNITY_IPHONE
+#if !(UNITY_IPHONE || UNITY_ANDROID || UNITY_METRO)
 
         /// <summary>OnMouseDown is called when the user has pressed the mouse button while over the GUIElement or Collider.</summary>
         public virtual void OnMouseDown() { }
@@ -135,7 +138,7 @@ namespace UniRx
         /// <summary>OnRenderObject is called after camera has rendered the scene.</summary>
         public virtual void OnRenderObject() { }
 
-        /// <summary>Called on the server whenever a Network.</summary>InitializeServer was invoked and has completed.</summary>
+        /// <summary>Called on the server whenever a Network. InitializeServer was invoked and has completed.</summary>
         public virtual void OnServerInitialized() { }
 
         /// <summary>OnTriggerEnter is called when the Collider other enters the trigger.</summary>
@@ -171,7 +174,7 @@ namespace UniRx
         /// <summary>Update is called every frame, if the MonoBehaviour is enabled.</summary>
         public virtual void Update() { }
 
-#if !(UNITY_METRO || UNITY_WP8 || UNITY_NACL_CHROME)
+#if !(UNITY_METRO || UNITY_WP8 || UNITY_NACL_CHROME || UNITY_WEBGL)
         /// <summary>Called on the client when the connection was lost or you disconnected from the server.</summary>
         public virtual void OnDisconnectedFromServer(NetworkDisconnection info) { }
 
@@ -184,7 +187,7 @@ namespace UniRx
         /// <summary>Called on clients or servers when reporting events from the MasterServer.</summary>
         public virtual void OnMasterServerEvent(MasterServerEvent msEvent) { }
 
-        /// <summary>Called on objects which have been network instantiated with Network.</summary>Instantiate.</summary>
+        /// <summary>Called on objects which have been network instantiated with Network Instantiate.</summary>
         public virtual void OnNetworkInstantiate(NetworkMessageInfo info) { }
 
         /// <summary>Called on the server whenever a new player has successfully connected.</summary>

@@ -107,6 +107,12 @@ namespace UniRx
                         editorQueueWorker.Enqueue(() => ConsumeEnumerator(UnwrapWaitWWW(www, routine)));
                         return;
                     }
+                    else if (type == typeof(AsyncOperation))
+                    {
+                        var asyncOperation = (AsyncOperation)current;
+                        editorQueueWorker.Enqueue(() => ConsumeEnumerator(UnwrapWaitAsyncOperation(asyncOperation, routine)));
+                        return;
+                    }
                     else if (type == typeof(WaitForSeconds))
                     {
                         var waitForSeconds = (WaitForSeconds)current;
@@ -121,7 +127,7 @@ namespace UniRx
                         goto ENQUEUE;
                     }
 
-                ENQUEUE:
+                    ENQUEUE:
                     editorQueueWorker.Enqueue(() => ConsumeEnumerator(routine)); // next update
                 }
             }
@@ -129,6 +135,15 @@ namespace UniRx
             IEnumerator UnwrapWaitWWW(WWW www, IEnumerator continuation)
             {
                 while (!www.isDone)
+                {
+                    yield return null;
+                }
+                ConsumeEnumerator(continuation);
+            }
+
+            IEnumerator UnwrapWaitAsyncOperation(AsyncOperation asyncOperation, IEnumerator continuation)
+            {
+                while (!asyncOperation.isDone)
                 {
                     yield return null;
                 }
@@ -162,7 +177,11 @@ namespace UniRx
 
 #endif
 
-            Instance.queueWorker.Enqueue(action);
+            var dispatcher = Instance;
+            if (!isQuitting && !object.ReferenceEquals(dispatcher, null))
+            {
+                dispatcher.queueWorker.Enqueue(action);
+            }
         }
 
         /// <summary>Dispatch Synchronous action if possible.</summary>
@@ -180,7 +199,11 @@ namespace UniRx
                 }
                 catch (Exception ex)
                 {
-                    MainThreadDispatcher.Instance.unhandledExceptionCallback(ex);
+                    var dispatcher = MainThreadDispatcher.Instance;
+                    if (dispatcher != null)
+                    {
+                        dispatcher.unhandledExceptionCallback(ex);
+                    }
                 }
             }
             else
@@ -202,7 +225,11 @@ namespace UniRx
             }
             catch (Exception ex)
             {
-                MainThreadDispatcher.Instance.unhandledExceptionCallback(ex);
+                var dispatcher = MainThreadDispatcher.Instance;
+                if (dispatcher != null)
+                {
+                    dispatcher.unhandledExceptionCallback(ex);
+                }
             }
         }
 
@@ -220,7 +247,18 @@ namespace UniRx
                 if (!ScenePlaybackDetector.IsPlaying) { EditorThreadDispatcher.Instance.PseudoStartCoroutine(routine); return; }
 #endif
 
-                Instance.queueWorker.Enqueue(() => Instance.StartCoroutine_Auto(routine));
+                var dispatcher = Instance;
+                if (!isQuitting && !object.ReferenceEquals(dispatcher, null))
+                {
+                    dispatcher.queueWorker.Enqueue(() =>
+                    {
+                        var distpacher2 = Instance;
+                        if (distpacher2 != null)
+                        {
+                            distpacher2.StartCoroutine_Auto(routine);
+                        }
+                    });
+                }
             }
         }
 
@@ -230,7 +268,15 @@ namespace UniRx
             if (!ScenePlaybackDetector.IsPlaying) { EditorThreadDispatcher.Instance.PseudoStartCoroutine(routine); return null; }
 #endif
 
-            return Instance.StartCoroutine_Auto(routine);
+            var dispatcher = Instance;
+            if (dispatcher != null)
+            {
+                return dispatcher.StartCoroutine_Auto(routine);
+            }
+            else
+            {
+                return null;
+            }
         }
 
         public static void RegisterUnhandledExceptionCallback(Action<Exception> exceptionCallback)
@@ -251,6 +297,7 @@ namespace UniRx
 
         static MainThreadDispatcher instance;
         static bool initialized;
+        static bool isQuitting = false;
 
         public static string InstanceName
         {
@@ -301,6 +348,13 @@ namespace UniRx
                     var ex = new Exception("UniRx requires a MainThreadDispatcher component created on the main thread. Make sure it is added to the scene before calling UniRx from a worker thread.");
                     UnityEngine.Debug.LogException(ex);
                     throw ex;
+                }
+
+                if (isQuitting)
+                {
+                    // don't create new instance after quitting
+                    // avoid "Some objects were not cleaned up when closing the scene find target" error.
+                    return;
                 }
 
                 if (dispatcher == null)
@@ -441,6 +495,7 @@ namespace UniRx
 
         void OnApplicationQuit()
         {
+            isQuitting = true;
             if (onApplicationQuit != null) onApplicationQuit.OnNext(Unit.Default);
         }
 
